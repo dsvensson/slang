@@ -4258,6 +4258,13 @@ protected:
                 break;
             }
         case SystemValueSemanticName::InstanceID:
+            {
+                // [[instance_id]] includes the base instance; SV_InstanceID does not.
+                result.isSpecial = true;
+                result.systemValueName = toSlice("instance_id");
+                result.permittedTypes.add(builder.getBasicType(BaseType::UInt));
+                break;
+            }
         case SystemValueSemanticName::VulkanInstanceID:
             {
                 result.systemValueName = toSlice("instance_id");
@@ -4482,6 +4489,36 @@ protected:
             auto val = builder.getBoolValue(false);
             var->replaceUsesWith(val);
             var->removeAndDeallocate();
+        }
+        else if (info.systemValueNameEnum == SystemValueSemanticName::InstanceID)
+        {
+            // `var` stays the [[instance_id]] parameter; its uses read `var - base_instance`.
+            IRInst* baseInstance = nullptr;
+            for (auto item : collectSystemValFromEntryPoint(entryPoint))
+            {
+                auto indexAsString = String(item.attrIndex);
+                if (getSystemValueInfo(item.attrName, &indexAsString, item.var)
+                        .systemValueNameEnum == SystemValueSemanticName::StartInstanceLocation)
+                    baseInstance = item.var;
+            }
+
+            List<IRUse*> uses;
+            for (auto use = var->firstUse; use; use = use->nextUse)
+                uses.add(use);
+
+            IRBuilder svBuilder(builder.getModule());
+            svBuilder.setInsertBefore(entryPoint.entryPointFunc->getFirstOrdinaryInst());
+            if (!baseInstance)
+            {
+                baseInstance = svBuilder.emitParam(svBuilder.getUIntType());
+                svBuilder.addTargetSystemValueDecoration(baseInstance, toSlice("base_instance"));
+                svBuilder.addNameHintDecoration(baseInstance, toSlice("base_instance"));
+            }
+            if (baseInstance->getFullType() != var->getFullType())
+                baseInstance = tryConvertValue(svBuilder, baseInstance, var->getFullType());
+            auto instanceID = svBuilder.emitSub(var->getFullType(), var, baseInstance);
+            for (auto use : uses)
+                svBuilder.replaceOperand(use, instanceID);
         }
         else if (info.systemValueNameEnum == SystemValueSemanticName::GroupIndex)
         {
@@ -4943,6 +4980,8 @@ protected:
         case SystemValueSemanticName::InstanceID:
         case SystemValueSemanticName::VulkanInstanceID:
             {
+                // instance_index includes firstInstance, and WGSL has no base_instance builtin
+                // to subtract, so SV_InstanceID cannot be made HLSL-accurate here.
                 result.systemValueName = toSlice("instance_index");
                 result.permittedTypes.add(builder.getUIntType());
             }
