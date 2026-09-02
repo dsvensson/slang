@@ -6,6 +6,7 @@
 #include "slang-emit-source-writer.h"
 #include "slang-ir-entry-point-decorations.h"
 #include "slang-ir-util.h"
+#include "slang-parameter-binding.h"
 #include "slang-rich-diagnostics.h"
 
 
@@ -1616,19 +1617,25 @@ bool MetalSourceEmitter::_emitUserSemantic(
     UnownedStringSlice semanticName,
     IRIntegerValue semanticIndex)
 {
-    if (!semanticName.startsWithCaseInsensitive(toSlice("SV_")))
+    if (semanticName.startsWithCaseInsensitive(toSlice("SV_")))
+        return false;
+    // Front-end decorations keep the index in the name ("TEXCOORD1", -1) while layouts split
+    // it ("TEXCOORD", 1); both must name the same interstage attribute.
+    UnownedStringSlice baseName, digits;
+    if (semanticIndex < 0 && splitNameAndIndex(semanticName, baseName, digits))
     {
-        m_writer->emit(" [[user(");
-        m_writer->emit(String(semanticName).toUpper());
-        if (semanticIndex > 0)
-        {
-            m_writer->emit("_");
-            m_writer->emit(semanticIndex);
-        }
-        m_writer->emit(")]]");
-        return true;
+        semanticName = baseName;
+        semanticIndex = stringToInt(String(digits));
     }
-    return false;
+    m_writer->emit(" [[user(");
+    m_writer->emit(String(semanticName).toUpper());
+    if (semanticIndex > 0)
+    {
+        m_writer->emit("_");
+        m_writer->emit(semanticIndex);
+    }
+    m_writer->emit(")]]");
+    return true;
 }
 
 bool MetalSourceEmitter::tryEmitGlobalParamImpl(IRGlobalParam* varDecl, IRType* varType)
